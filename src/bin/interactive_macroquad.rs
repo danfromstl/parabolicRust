@@ -1,10 +1,15 @@
 use macroquad::prelude::*;
 
 const G: f32 = 9.8;
+const INITIAL_WINDOW_WIDTH: i32 = 1920;
+const INITIAL_WINDOW_HEIGHT: i32 = 1080;
+const MSAA_SAMPLES: i32 = 4;
+const UI_FONT_PATH: &str = "assets/fonts/Lato-Regular.ttf";
 const LEFT_MARGIN: f32 = 60.0;
 const RIGHT_MARGIN: f32 = 30.0;
-const TOP_MARGIN: f32 = 30.0;
+const TOP_MARGIN: f32 = 50.0;
 const BOTTOM_MARGIN: f32 = 70.0;
+const CONTROLS_X_NUDGE: f32 = 12.0;
 const TRAJECTORY_SAMPLES: usize = 300;
 
 #[derive(Clone, Copy)]
@@ -84,8 +89,41 @@ fn draw_grid(left: f32, right: f32, top: f32, bottom: f32, color: Color) {
     }
 }
 
-#[macroquad::main("ParabolicRust Interactive")]
+fn draw_ui_text(text: &str, x: f32, y: f32, font_size: u16, color: Color, font: Option<&Font>) {
+    draw_text_ex(
+        text,
+        x,
+        y,
+        TextParams {
+            font,
+            font_size,
+            color,
+            ..Default::default()
+        },
+    );
+}
+
+fn window_conf() -> Conf {
+    Conf {
+        window_title: "ParabolicRust Interactive".to_string(),
+        window_width: INITIAL_WINDOW_WIDTH,
+        window_height: INITIAL_WINDOW_HEIGHT,
+        high_dpi: true,
+        sample_count: MSAA_SAMPLES,
+        ..Default::default()
+    }
+}
+
+#[macroquad::main(window_conf)]
 async fn main() {
+    let ui_font = match load_ttf_font(UI_FONT_PATH).await {
+        Ok(font) => Some(font),
+        Err(err) => {
+            println!("Could not load '{UI_FONT_PATH}': {err}. Falling back to default font.");
+            None
+        }
+    };
+
     let mut inputs = Inputs {
         angle_deg: 45.0,
         speed_mps: 60.0,
@@ -233,40 +271,44 @@ async fn main() {
         // HUD
         let status = if is_playing { "Playing" } else { "Paused" };
         let label_color = Color::from_rgba(30, 30, 35, 255);
-        draw_text(
-            "ParabolicRust Interactive (macroquad)",
+        draw_ui_text(
+            "ParabolicRust - Interactive App",
             left,
-            24.0,
-            28.0,
+            30.0,
+            30,
             label_color,
+            ui_font.as_ref(),
         );
-        draw_text(
+        draw_ui_text(
             &format!(
                 "Angle: {:.1} deg | Velocity: {:.1} m/s | Height: {:.1} m",
                 inputs.angle_deg, inputs.speed_mps, inputs.height_m
             ),
             left,
-            screen_h - 40.0,
-            24.0,
+            screen_h - 45.0,
+            25,
             label_color,
+            ui_font.as_ref(),
         );
-        draw_text(
+        draw_ui_text(
             &format!(
                 "Flight: {:.2} s | Range: {:.2} m | t: {:.2} s | Speed x{:.2} | {}",
                 flight_time, horizontal_range, t_now, sim_speed, status
             ),
             left,
             screen_h - 14.0,
-            22.0,
-            label_color,
+            22,
+            DARKGRAY,
+            ui_font.as_ref(),
         );
 
-        draw_text(
+        draw_ui_text(
             "Controls: Space play/pause | R reset | Q/A angle | W/S velocity | E/D height | Up/Down sim speed",
-            left,
-            top + 18.0,
-            20.0,
+            left + CONTROLS_X_NUDGE,
+            top + 28.0,
+            20,
             DARKGRAY,
+            ui_font.as_ref(),
         );
 
         next_frame().await;
