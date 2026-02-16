@@ -297,8 +297,8 @@ async fn main() {
             ),
             left,
             screen_h - 14.0,
-            22,
-            DARKGRAY,
+            20,
+            BLUE,
             ui_font.as_ref(),
         );
 
