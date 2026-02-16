@@ -20,7 +20,7 @@ A75_V150_H600_trajectory_2-16-26.png
 - `v4`: anchored plot axes at origin, timestamped/parameterized filenames, landing range label
 - `v5`: thicker arc line, ground locked to chart bottom, two-line landing annotation (range + flight time)
 - `v6`: added an interactive real-time visualizer using `macroquad`
-- `v7`: added web build pipeline for the interactive app (WASM + HTML entrypoint)
+- `v7`: added web build pipeline (WASM + HTML), and upgraded interactive mode into a Moon level game with target + bounce
 
 ## Prerequisites (Windows)
 Install Rust:
@@ -72,13 +72,16 @@ Run the interactive app:
 cargo run --bin interactive_macroquad
 ```
 
+Current mode:
+- starts in `Moon Level 2` (`Bounce Into Target`)
+- moon gravity, no drag, no wind
+- requires at least one bounce on the fixed surface before a target hit counts
+
 Controls:
-- `Space`: play/pause animation
-- `R`: reset animation
-- `Q` / `A`: increase/decrease angle
-- `W` / `S`: increase/decrease velocity
-- `E` / `D`: increase/decrease launch height
-- `Up` / `Down`: increase/decrease simulation speed
+- use sliders in the control panel for `Angle`, `Velocity`, and `Height`
+- `Launch (Space)`: launch shot (or pause/resume while flying)
+- `Reset (R)`: reset shot
+- `Toggle Preview`: show/hide predicted path
 
 ## Web UI (v7)
 Build the interactive app for browser:
