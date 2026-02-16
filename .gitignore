@@ -8,3 +8,6 @@ Thumbs.db
 !.vscode/extensions.json
 !.vscode/launch.json
 !.vscode/tasks.json
+web/interactive_macroquad.wasm
+web/mq_js_bundle.js
+web/assets/

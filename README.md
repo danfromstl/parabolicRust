@@ -20,6 +20,7 @@ A75_V150_H600_trajectory_2-16-26.png
 - `v4`: anchored plot axes at origin, timestamped/parameterized filenames, landing range label
 - `v5`: thicker arc line, ground locked to chart bottom, two-line landing annotation (range + flight time)
 - `v6`: added an interactive real-time visualizer using `macroquad`
+- `v7`: added web build pipeline for the interactive app (WASM + HTML entrypoint)
 
 ## Prerequisites (Windows)
 Install Rust:
@@ -78,6 +79,33 @@ Controls:
 - `W` / `S`: increase/decrease velocity
 - `E` / `D`: increase/decrease launch height
 - `Up` / `Down`: increase/decrease simulation speed
+
+## Web UI (v7)
+Build the interactive app for browser:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/build_web.ps1
+```
+
+Then serve the `web/` folder:
+
+```powershell
+cd web
+python -m http.server 8080
+```
+
+Open in Edge/Chrome:
+
+```text
+http://localhost:8080
+```
+
+Notes:
+- Keep using a local server; opening `index.html` directly may fail due browser security rules for WASM/assets.
+- `scripts/build_web.ps1` refreshes:
+  - `web/interactive_macroquad.wasm`
+  - `web/mq_js_bundle.js`
+  - `web/assets/*`
 
 ## Test
 ```powershell
