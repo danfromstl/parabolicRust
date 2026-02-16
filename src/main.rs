@@ -11,6 +11,7 @@ const X_LABEL_AREA: u32 = 60;
 const Y_LABEL_AREA: u32 = 100;
 const TRAJECTORY_SAMPLES: usize = 500;
 const DISTANCE_TO_HEIGHT_RATIO: f64 = 2.0; // 1:2 height:distance window
+const TRAJECTORY_LINE_WIDTH: u32 = 3;
 
 #[derive(Clone, Copy, Debug)]
 struct Inputs {
@@ -131,30 +132,19 @@ fn axis_bounds(points: &[(f64, f64)]) -> ((f64, f64), (f64, f64)) {
         .map(|(x, _)| *x)
         .fold(f64::NEG_INFINITY, f64::max)
         .max(0.0);
-    let min_y = points
-        .iter()
-        .map(|(_, y)| *y)
-        .fold(f64::INFINITY, f64::min)
-        .min(0.0);
     let max_y = points
         .iter()
         .map(|(_, y)| *y)
         .fold(f64::NEG_INFINITY, f64::max)
         .max(0.0);
 
-    let x_min = 0.0;
     let raw_x_span = max_x.max(1.0);
-    let raw_y_span = (max_y - min_y).abs().max(1.0);
+    let raw_y_span = max_y.max(1.0);
     let x_pad = raw_x_span * 0.06;
     let y_pad = raw_y_span * 0.10;
 
-    let mut x_max = max_x + x_pad;
-    let mut y_min = min_y - y_pad;
-    let mut y_max = max_y + y_pad;
-
-    let y_center = (y_min + y_max) * 0.5;
-    let mut x_span = (x_max - x_min).max(1.0);
-    let mut y_span = (y_max - y_min).max(1.0);
+    let mut x_span = (max_x + x_pad).max(1.0);
+    let mut y_span = (max_y + y_pad).max(1.0);
 
     // Expand the smaller span so every image keeps the same data-window ratio.
     if x_span / y_span < DISTANCE_TO_HEIGHT_RATIO {
@@ -163,18 +153,10 @@ fn axis_bounds(points: &[(f64, f64)]) -> ((f64, f64), (f64, f64)) {
         y_span = x_span / DISTANCE_TO_HEIGHT_RATIO;
     }
 
-    x_max = x_min + x_span;
-    y_min = y_center - (y_span * 0.5);
-    y_max = y_center + (y_span * 0.5);
-
-    // Keep ground visible in every chart.
-    if y_min > 0.0 {
-        y_max -= y_min;
-        y_min = 0.0;
-    } else if y_max < 0.0 {
-        y_min -= y_max;
-        y_max = 0.0;
-    }
+    let x_min = 0.0;
+    let x_max = x_span;
+    let y_min = 0.0;
+    let y_max = y_span;
 
     ((x_min, x_max), (y_min, y_max))
 }
@@ -246,7 +228,10 @@ fn save_trajectory_plot(
         .map_err(|e| format!("Failed to draw grid/axes: {e:?}"))?;
 
     chart
-        .draw_series(LineSeries::new(points.iter().copied(), &BLUE.mix(0.9)))
+        .draw_series(LineSeries::new(
+            points.iter().copied(),
+            ShapeStyle::from(&BLUE.mix(0.9)).stroke_width(TRAJECTORY_LINE_WIDTH),
+        ))
         .map_err(|e| format!("Failed to draw trajectory line: {e:?}"))?;
 
     chart
@@ -266,17 +251,26 @@ fn save_trajectory_plot(
 
     let x_span = x_max - x_min;
     let y_span = y_max - y_min;
-    let landing_label = format!("Range: {:.2} m", horizontal_distance_m.abs());
+    let distance_label = format!("Range: {:.2} m", horizontal_distance_m.abs());
+    let time_label = format!("Flight time: {:.1} s", time_of_flight_s);
     let label_x = (landing.0 + (0.02 * x_span)).min(x_max - (0.01 * x_span));
     let label_y = landing.1 + (0.04 * y_span);
 
     chart
         .draw_series(std::iter::once(Text::new(
-            landing_label,
-            (label_x, label_y),
+            distance_label,
+            (label_x, label_y + (0.035 * y_span)),
             ("Segoe UI", 16).into_font(),
         )))
         .map_err(|e| format!("Failed to draw landing label: {e:?}"))?;
+
+    chart
+        .draw_series(std::iter::once(Text::new(
+            time_label,
+            (label_x, label_y),
+            ("Segoe UI", 16).into_font(),
+        )))
+        .map_err(|e| format!("Failed to draw flight-time label: {e:?}"))?;
 
     root.present()
         .map_err(|e| format!("Failed to write image file: {e:?}"))?;
@@ -410,5 +404,20 @@ mod tests {
 
         assert_close(x_min, 0.0, 1e-9);
         assert!(x_max > 0.0);
+    }
+
+    #[test]
+    fn plot_window_keeps_ground_on_bottom() {
+        let inputs = Inputs {
+            angle_deg: 45.0,
+            speed_mps: 20.0,
+            height_m: 3.0,
+        };
+        let (time, _) = flight_time_and_range(inputs).expect("calculation should succeed");
+        let points = sample_trajectory(inputs, time, 100);
+        let (_, (y_min, y_max)) = axis_bounds(&points);
+
+        assert_close(y_min, 0.0, 1e-9);
+        assert!(y_max > 0.0);
     }
 }
