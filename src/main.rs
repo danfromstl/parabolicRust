@@ -1,9 +1,9 @@
+use chrono::{Datelike, Local};
 use plotters::prelude::*;
 use std::env;
 use std::io::{self, Write};
 
 const G: f64 = 9.8; // m/s^2
-const OUTPUT_IMAGE: &str = "trajectory.png";
 const PLOT_WIDTH: u32 = 1500;
 const PLOT_HEIGHT: u32 = 780;
 const CHART_MARGIN: u32 = 20;
@@ -126,11 +126,6 @@ fn sample_trajectory(inputs: Inputs, time_of_flight_s: f64, samples: usize) -> V
 }
 
 fn axis_bounds(points: &[(f64, f64)]) -> ((f64, f64), (f64, f64)) {
-    let min_x = points
-        .iter()
-        .map(|(x, _)| *x)
-        .fold(f64::INFINITY, f64::min)
-        .min(0.0);
     let max_x = points
         .iter()
         .map(|(x, _)| *x)
@@ -147,17 +142,16 @@ fn axis_bounds(points: &[(f64, f64)]) -> ((f64, f64), (f64, f64)) {
         .fold(f64::NEG_INFINITY, f64::max)
         .max(0.0);
 
-    let raw_x_span = (max_x - min_x).abs().max(1.0);
+    let x_min = 0.0;
+    let raw_x_span = max_x.max(1.0);
     let raw_y_span = (max_y - min_y).abs().max(1.0);
     let x_pad = raw_x_span * 0.06;
     let y_pad = raw_y_span * 0.10;
 
-    let mut x_min = min_x - x_pad;
     let mut x_max = max_x + x_pad;
     let mut y_min = min_y - y_pad;
     let mut y_max = max_y + y_pad;
 
-    let x_center = (x_min + x_max) * 0.5;
     let y_center = (y_min + y_max) * 0.5;
     let mut x_span = (x_max - x_min).max(1.0);
     let mut y_span = (y_max - y_min).max(1.0);
@@ -169,8 +163,7 @@ fn axis_bounds(points: &[(f64, f64)]) -> ((f64, f64), (f64, f64)) {
         y_span = x_span / DISTANCE_TO_HEIGHT_RATIO;
     }
 
-    x_min = x_center - (x_span * 0.5);
-    x_max = x_center + (x_span * 0.5);
+    x_max = x_min + x_span;
     y_min = y_center - (y_span * 0.5);
     y_max = y_center + (y_span * 0.5);
 
@@ -186,9 +179,40 @@ fn axis_bounds(points: &[(f64, f64)]) -> ((f64, f64), (f64, f64)) {
     ((x_min, x_max), (y_min, y_max))
 }
 
+fn format_value_for_filename(value: f64) -> String {
+    let rounded = (value * 100.0).round() / 100.0;
+    let mut s = if rounded.fract().abs() < 1e-9 {
+        format!("{rounded:.0}")
+    } else {
+        format!("{rounded:.2}")
+            .trim_end_matches('0')
+            .trim_end_matches('.')
+            .to_string()
+    };
+    if let Some(stripped) = s.strip_prefix('-') {
+        s = format!("neg{stripped}");
+    }
+    s.replace('.', "p")
+}
+
+fn build_output_image_name(inputs: Inputs) -> String {
+    let now = Local::now();
+    let yy = ((now.year() % 100) + 100) % 100;
+    format!(
+        "A{}_V{}_H{}_trajectory_{}-{}-{:02}.png",
+        format_value_for_filename(inputs.angle_deg),
+        format_value_for_filename(inputs.speed_mps),
+        format_value_for_filename(inputs.height_m),
+        now.month(),
+        now.day(),
+        yy
+    )
+}
+
 fn save_trajectory_plot(
     inputs: Inputs,
     time_of_flight_s: f64,
+    horizontal_distance_m: f64,
     output_path: &str,
 ) -> Result<(), String> {
     let points = sample_trajectory(inputs, time_of_flight_s, TRAJECTORY_SAMPLES);
@@ -240,6 +264,20 @@ fn save_trajectory_plot(
         .draw_series(std::iter::once(Circle::new(landing, 5, GREEN.filled())))
         .map_err(|e| format!("Failed to draw landing point: {e:?}"))?;
 
+    let x_span = x_max - x_min;
+    let y_span = y_max - y_min;
+    let landing_label = format!("Range: {:.2} m", horizontal_distance_m.abs());
+    let label_x = (landing.0 + (0.02 * x_span)).min(x_max - (0.01 * x_span));
+    let label_y = landing.1 + (0.04 * y_span);
+
+    chart
+        .draw_series(std::iter::once(Text::new(
+            landing_label,
+            (label_x, label_y),
+            ("Segoe UI", 16).into_font(),
+        )))
+        .map_err(|e| format!("Failed to draw landing label: {e:?}"))?;
+
     root.present()
         .map_err(|e| format!("Failed to write image file: {e:?}"))?;
 
@@ -255,7 +293,8 @@ fn print_usage(program: &str) {
     println!("  {program}");
     println!("  {program} 45 30 1.5");
     println!();
-    println!("The program saves a PNG plot to {OUTPUT_IMAGE}.");
+    println!("The program saves a PNG plot named like:");
+    println!("  A75_V150_H600_trajectory_2-16-26.png");
 }
 
 fn run() -> Result<(), String> {
@@ -273,12 +312,13 @@ fn run() -> Result<(), String> {
     };
 
     let (time, distance) = flight_time_and_range(inputs)?;
+    let output_image = build_output_image_name(inputs);
 
     println!("\nTime of flight: {:.4} s", time);
     println!("Horizontal distance: {:.4} m", distance);
 
-    save_trajectory_plot(inputs, time, OUTPUT_IMAGE)?;
-    println!("Saved plot: {OUTPUT_IMAGE}");
+    save_trajectory_plot(inputs, time, distance, &output_image)?;
+    println!("Saved plot: {output_image}");
 
     Ok(())
 }
@@ -293,7 +333,7 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{Inputs, flight_time_and_range, sample_trajectory};
+    use super::{Inputs, axis_bounds, flight_time_and_range, sample_trajectory};
 
     fn assert_close(actual: f64, expected: f64, tolerance: f64) {
         assert!(
@@ -355,5 +395,20 @@ mod tests {
         assert_close(first.0, 0.0, 1e-9);
         assert_close(first.1, 1.5, 1e-9);
         assert_close(last.1, 0.0, 0.01);
+    }
+
+    #[test]
+    fn plot_window_keeps_x_origin_on_left() {
+        let inputs = Inputs {
+            angle_deg: 60.0,
+            speed_mps: 25.0,
+            height_m: 10.0,
+        };
+        let (time, _) = flight_time_and_range(inputs).expect("calculation should succeed");
+        let points = sample_trajectory(inputs, time, 100);
+        let ((x_min, x_max), _) = axis_bounds(&points);
+
+        assert_close(x_min, 0.0, 1e-9);
+        assert!(x_max > 0.0);
     }
 }

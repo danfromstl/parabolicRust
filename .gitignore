@@ -1,6 +1,6 @@
 /target
 **/target/
-trajectory.png
+*_trajectory_*.png
 **/*.rs.bk
 .DS_Store
 Thumbs.db

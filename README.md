@@ -5,7 +5,7 @@ Parabolic arc distance calculator written in Rust.
 Given launch angle, velocity, and starting height, it calculates:
 - time of flight
 - horizontal distance
-- a trajectory plot image (`trajectory.png`) with auto-scaled axes
+- a trajectory plot image with names like `A75_V150_H600_trajectory_2-16-26.png`
 - a consistent chart window ratio (1:2 height:distance) for easier visual comparison
 
 ## Prerequisites (Windows)
@@ -52,13 +52,11 @@ Format is:
 cargo run -- <angle_deg> <velocity_mps> <height_m>
 ```
 
-After each run, the program writes:
+After each run, the program writes a PNG in the repo root, for example:
 
 ```text
-trajectory.png
+A75_V150_H600_trajectory_2-16-26.png
 ```
-
-in the repo root.
 
 ## Test
 ```powershell
