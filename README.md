@@ -6,6 +6,7 @@ Given launch angle, velocity, and starting height, it calculates:
 - time of flight
 - horizontal distance
 - a trajectory plot image (`trajectory.png`) with auto-scaled axes
+- a consistent chart window ratio (1:2 height:distance) for easier visual comparison
 
 ## Prerequisites (Windows)
 Install Rust with `rustup` if needed:

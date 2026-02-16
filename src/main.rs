@@ -4,9 +4,13 @@ use std::io::{self, Write};
 
 const G: f64 = 9.8; // m/s^2
 const OUTPUT_IMAGE: &str = "trajectory.png";
-const PLOT_WIDTH: u32 = 1280;
-const PLOT_HEIGHT: u32 = 720;
+const PLOT_WIDTH: u32 = 1500;
+const PLOT_HEIGHT: u32 = 780;
+const CHART_MARGIN: u32 = 20;
+const X_LABEL_AREA: u32 = 60;
+const Y_LABEL_AREA: u32 = 100;
 const TRAJECTORY_SAMPLES: usize = 500;
+const DISTANCE_TO_HEIGHT_RATIO: f64 = 2.0; // 1:2 height:distance window
 
 #[derive(Clone, Copy, Debug)]
 struct Inputs {
@@ -122,6 +126,11 @@ fn sample_trajectory(inputs: Inputs, time_of_flight_s: f64, samples: usize) -> V
 }
 
 fn axis_bounds(points: &[(f64, f64)]) -> ((f64, f64), (f64, f64)) {
+    let min_x = points
+        .iter()
+        .map(|(x, _)| *x)
+        .fold(f64::INFINITY, f64::min)
+        .min(0.0);
     let max_x = points
         .iter()
         .map(|(x, _)| *x)
@@ -138,13 +147,41 @@ fn axis_bounds(points: &[(f64, f64)]) -> ((f64, f64), (f64, f64)) {
         .fold(f64::NEG_INFINITY, f64::max)
         .max(0.0);
 
-    let x_min = 0.0;
-    let x_max = if max_x > 0.0 { max_x * 1.08 } else { 1.0 };
+    let raw_x_span = (max_x - min_x).abs().max(1.0);
+    let raw_y_span = (max_y - min_y).abs().max(1.0);
+    let x_pad = raw_x_span * 0.06;
+    let y_pad = raw_y_span * 0.10;
 
-    let y_span = (max_y - min_y).abs();
-    let y_pad = if y_span > 0.0 { y_span * 0.12 } else { 1.0 };
-    let y_min = min_y - (0.25 * y_pad);
-    let y_max = max_y + y_pad;
+    let mut x_min = min_x - x_pad;
+    let mut x_max = max_x + x_pad;
+    let mut y_min = min_y - y_pad;
+    let mut y_max = max_y + y_pad;
+
+    let x_center = (x_min + x_max) * 0.5;
+    let y_center = (y_min + y_max) * 0.5;
+    let mut x_span = (x_max - x_min).max(1.0);
+    let mut y_span = (y_max - y_min).max(1.0);
+
+    // Expand the smaller span so every image keeps the same data-window ratio.
+    if x_span / y_span < DISTANCE_TO_HEIGHT_RATIO {
+        x_span = y_span * DISTANCE_TO_HEIGHT_RATIO;
+    } else {
+        y_span = x_span / DISTANCE_TO_HEIGHT_RATIO;
+    }
+
+    x_min = x_center - (x_span * 0.5);
+    x_max = x_center + (x_span * 0.5);
+    y_min = y_center - (y_span * 0.5);
+    y_max = y_center + (y_span * 0.5);
+
+    // Keep ground visible in every chart.
+    if y_min > 0.0 {
+        y_max -= y_min;
+        y_min = 0.0;
+    } else if y_max < 0.0 {
+        y_min -= y_max;
+        y_max = 0.0;
+    }
 
     ((x_min, x_max), (y_min, y_max))
 }
@@ -165,10 +202,9 @@ fn save_trajectory_plot(
         .map_err(|e| format!("Failed to clear plotting area: {e:?}"))?;
 
     let mut chart = ChartBuilder::on(&root)
-        .caption("Parabolic Trajectory", ("Segoe UI", 34).into_font())
-        .margin(20)
-        .x_label_area_size(55)
-        .y_label_area_size(70)
+        .margin(CHART_MARGIN)
+        .x_label_area_size(X_LABEL_AREA)
+        .y_label_area_size(Y_LABEL_AREA)
         .build_cartesian_2d(x_min..x_max, y_min..y_max)
         .map_err(|e| format!("Failed to build plot axes: {e:?}"))?;
 
