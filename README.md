@@ -19,6 +19,7 @@ A75_V150_H600_trajectory_2-16-26.png
 - `v3`: standardized chart framing with fixed distance:height window ratio
 - `v4`: anchored plot axes at origin, timestamped/parameterized filenames, landing range label
 - `v5`: thicker arc line, ground locked to chart bottom, two-line landing annotation (range + flight time)
+- `v6`: added an interactive real-time visualizer using `macroquad`
 
 ## Prerequisites (Windows)
 Install Rust:
@@ -62,6 +63,21 @@ Input format:
 ```text
 cargo run -- <angle_deg> <velocity_mps> <height_m>
 ```
+
+## Interactive Visualizer (macroquad)
+Run the interactive app:
+
+```powershell
+cargo run --bin interactive_macroquad
+```
+
+Controls:
+- `Space`: play/pause animation
+- `R`: reset animation
+- `Q` / `A`: increase/decrease angle
+- `W` / `S`: increase/decrease velocity
+- `E` / `D`: increase/decrease launch height
+- `Up` / `Down`: increase/decrease simulation speed
 
 ## Test
 ```powershell

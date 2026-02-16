@@ -5,4 +5,5 @@ edition = "2024"
 
 [dependencies]
 chrono = { version = "0.4.43", default-features = true, features = ["clock"] }
+macroquad = "0.4.14"
 plotters = "0.3.7"
