@@ -21,6 +21,37 @@ A75_V150_H600_trajectory_2-16-26.png
 - `v5`: thicker arc line, ground locked to chart bottom, two-line landing annotation (range + flight time)
 - `v6`: added an interactive real-time visualizer using `macroquad`
 - `v7`: added web build pipeline (WASM + HTML), and upgraded interactive mode into a Moon level game with target + bounce
+- `v8 - Phase 1`: began structural refactor planning baseline (behavior-preserving organization pass before optimization/feature changes)
+- `v8 - Phase 2`: split the interactive macroquad binary into focused modules (`app`, `input`, `physics`, `render`, `model`, `constants`) with no intended behavior changes
+
+## v8 - Phase 1 Structure
+This phase is intentionally behavior-preserving. No gameplay/plot logic was redesigned; shared core logic was moved into reusable library modules so future refactors can happen safely.
+
+Current shared module layout:
+```text
+src/
+  lib.rs
+  core/
+    mod.rs
+    ballistics.rs   # shared launch/trajectory/flight calculations (f64)
+    window.rs       # shared fixed-ratio axis window helpers (f64 + f32)
+```
+
+Notes:
+- `src/main.rs` now uses `core::ballistics` and `core::window` instead of local duplicate math.
+- `src/bin/interactive_macroquad/main.rs` (through module wiring) now uses `core::window` for the same axis scaling rule source.
+
+v8 Phase 2 interactive layout:
+```text
+src/bin/interactive_macroquad/
+  main.rs
+  app.rs
+  constants.rs
+  input.rs
+  model.rs
+  physics.rs
+  render.rs
+```
 
 ## Prerequisites (Windows)
 Install Rust:
@@ -80,11 +111,15 @@ Current mode:
 Controls:
 - use sliders in the control panel for `Angle`, `Velocity`, and `Height`
 - use `Simulation Speed` slider (`0.5x` to `5.0x`)
+- drag the launch dot and pull a ghost handle left/up/down to set launch angle + velocity
+- `W/S`: increase/decrease height (when mouse is not held)
+- `A/D`: decrease/increase velocity (when mouse is not held)
 - `Launch (Space)`: launch shot (or pause/resume while flying)
 - `Reset (R)`: reset shot
 - `Toggle Preview`: show/hide predicted path
 - `Prev Level (P)` / `Next Level (N)`: navigate unlocked Moon levels
-- Moon Levels 2 and 4: hover the bounce surface to reveal corner handles, then drag any corner to reshape it live
+- Moon Levels 2 and 4: hover the bounce surface to reveal corner + rotation handles
+- drag any corner to reshape, drag inside the surface to move it, or drag the rotation handle to rotate it
 
 Startup:
 - title screen appears first with a `Start Game` button (or press `Enter`/`Space`)

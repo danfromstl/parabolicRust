@@ -1,24 +1,19 @@
 use chrono::{Datelike, Local};
+use parabolic_rust::core::ballistics::{LaunchInputs, flight_time_and_range, sample_trajectory};
+use parabolic_rust::core::window::fixed_ratio_axis_window_f64;
 use plotters::prelude::*;
 use std::env;
 use std::io::{self, Write};
 
-const G: f64 = 9.8; // m/s^2
 const PLOT_WIDTH: u32 = 1500;
 const PLOT_HEIGHT: u32 = 780;
 const CHART_MARGIN: u32 = 20;
 const X_LABEL_AREA: u32 = 60;
 const Y_LABEL_AREA: u32 = 100;
 const TRAJECTORY_SAMPLES: usize = 500;
-const DISTANCE_TO_HEIGHT_RATIO: f64 = 2.0; // 1:2 height:distance window
 const TRAJECTORY_LINE_WIDTH: u32 = 3;
 
-#[derive(Clone, Copy, Debug)]
-struct Inputs {
-    angle_deg: f64,
-    speed_mps: f64,
-    height_m: f64,
-}
+type Inputs = LaunchInputs;
 
 fn parse_f64(value: &str, label: &str) -> Result<f64, String> {
     value
@@ -71,61 +66,6 @@ fn get_inputs_from_args(args: &[String]) -> Result<Inputs, String> {
     })
 }
 
-fn velocity_components(inputs: Inputs) -> (f64, f64) {
-    let theta = inputs.angle_deg.to_radians();
-    let vx = inputs.speed_mps * theta.cos();
-    let vy = inputs.speed_mps * theta.sin();
-    (vx, vy)
-}
-
-fn trajectory_at_time(inputs: Inputs, time_s: f64) -> (f64, f64) {
-    let (vx, vy) = velocity_components(inputs);
-    let x = vx * time_s;
-    let y = inputs.height_m + (vy * time_s) - (0.5 * G * time_s * time_s);
-    (x, y)
-}
-
-fn flight_time_and_range(inputs: Inputs) -> Result<(f64, f64), String> {
-    if !inputs.angle_deg.is_finite()
-        || !inputs.speed_mps.is_finite()
-        || !inputs.height_m.is_finite()
-    {
-        return Err("Inputs must be finite numbers.".to_string());
-    }
-    if inputs.speed_mps < 0.0 {
-        return Err("Velocity cannot be negative.".to_string());
-    }
-
-    let (_, vy) = velocity_components(inputs);
-
-    let disc = vy * vy + 2.0 * G * inputs.height_m;
-    if disc < 0.0 {
-        return Err(format!(
-            "No real landing time: vy^2 + 2*g*h is negative ({disc})."
-        ));
-    }
-
-    let t_land = (vy + disc.sqrt()) / G;
-    if t_land < 0.0 {
-        return Err(format!(
-            "Landing time computed as negative ({t_land}). Check your inputs."
-        ));
-    }
-
-    let (range, _) = trajectory_at_time(inputs, t_land);
-    Ok((t_land, range))
-}
-
-fn sample_trajectory(inputs: Inputs, time_of_flight_s: f64, samples: usize) -> Vec<(f64, f64)> {
-    let sample_count = samples.max(2);
-    (0..=sample_count)
-        .map(|i| {
-            let t = (i as f64 * time_of_flight_s) / sample_count as f64;
-            trajectory_at_time(inputs, t)
-        })
-        .collect()
-}
-
 fn axis_bounds(points: &[(f64, f64)]) -> ((f64, f64), (f64, f64)) {
     let max_x = points
         .iter()
@@ -138,20 +78,7 @@ fn axis_bounds(points: &[(f64, f64)]) -> ((f64, f64), (f64, f64)) {
         .fold(f64::NEG_INFINITY, f64::max)
         .max(0.0);
 
-    let raw_x_span = max_x.max(1.0);
-    let raw_y_span = max_y.max(1.0);
-    let x_pad = raw_x_span * 0.06;
-    let y_pad = raw_y_span * 0.10;
-
-    let mut x_span = (max_x + x_pad).max(1.0);
-    let mut y_span = (max_y + y_pad).max(1.0);
-
-    // Expand the smaller span so every image keeps the same data-window ratio.
-    if x_span / y_span < DISTANCE_TO_HEIGHT_RATIO {
-        x_span = y_span * DISTANCE_TO_HEIGHT_RATIO;
-    } else {
-        y_span = x_span / DISTANCE_TO_HEIGHT_RATIO;
-    }
+    let (x_span, y_span) = fixed_ratio_axis_window_f64(max_x, max_y);
 
     let x_min = 0.0;
     let x_max = x_span;
