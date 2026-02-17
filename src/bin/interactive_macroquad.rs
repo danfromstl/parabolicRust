@@ -19,6 +19,9 @@ const MAX_SIM_TIME_S: f32 = 60.0;
 const DISTANCE_TO_HEIGHT_RATIO: f32 = 2.0; // x:y data window ratio
 const X_GRID_LINES: usize = 10;
 const Y_GRID_LINES: usize = 8;
+const TITLE_SCREEN_BG: Color = Color::new(0.92, 0.93, 0.95, 1.0);
+const START_BUTTON_COLOR: Color = Color::new(0.14, 0.45, 0.95, 1.0);
+const START_BUTTON_TEXT: &str = "Start Game";
 
 #[derive(Clone, Copy)]
 struct LaunchConfig {
@@ -59,35 +62,115 @@ struct Level {
     title: &'static str,
     environment: Environment,
     target: Target,
-    bounce_surface: BounceSurface,
+    bounce_surface: Option<BounceSurface>,
     barriers: Vec<Barrier>,
     required_bounces: u32,
+    default_launch: LaunchConfig,
 }
 
 impl Level {
-    fn moon_level_two() -> Self {
-        Self {
-            code: "MOON 2",
-            title: "Bounce Into Target",
-            environment: Environment {
-                name: "Moon",
-                gravity_mps2: 1.62,
-                wind_accel_x_mps2: 0.0,
-                drag_linear: 0.0,
+    fn moon_campaign() -> Vec<Self> {
+        let moon_env = Environment {
+            name: "Moon",
+            gravity_mps2: 1.62,
+            wind_accel_x_mps2: 0.0,
+            drag_linear: 0.0,
+        };
+
+        vec![
+            Self {
+                code: "MOON 1",
+                title: "Direct Shot",
+                environment: moon_env,
+                target: Target {
+                    center: vec2(700.0, 130.0),
+                    radius_m: 30.0,
+                },
+                bounce_surface: None,
+                barriers: vec![],
+                required_bounces: 0,
+                default_launch: LaunchConfig {
+                    angle_deg: 18.0,
+                    speed_mps: 90.0,
+                    height_m: 20.0,
+                },
             },
-            target: Target {
-                center: vec2(980.0, 190.0),
-                radius_m: 35.0,
+            Self {
+                code: "MOON 2",
+                title: "Bounce Into Target",
+                environment: moon_env,
+                target: Target {
+                    center: vec2(980.0, 190.0),
+                    radius_m: 35.0,
+                },
+                bounce_surface: Some(BounceSurface {
+                    x_start: 380.0,
+                    x_end: 690.0,
+                    y: 85.0,
+                    restitution: 0.9,
+                }),
+                barriers: vec![],
+                required_bounces: 1,
+                default_launch: LaunchConfig {
+                    angle_deg: 28.0,
+                    speed_mps: 145.0,
+                    height_m: 22.0,
+                },
             },
-            bounce_surface: BounceSurface {
-                x_start: 380.0,
-                x_end: 690.0,
-                y: 85.0,
-                restitution: 0.9,
+            Self {
+                code: "MOON 3",
+                title: "Thread The Gap",
+                environment: moon_env,
+                target: Target {
+                    center: vec2(980.0, 190.0),
+                    radius_m: 32.0,
+                },
+                bounce_surface: None,
+                barriers: vec![
+                    Barrier {
+                        rect: Rect::new(560.0, 0.0, 38.0, 230.0),
+                    },
+                    Barrier {
+                        rect: Rect::new(560.0, 310.0, 38.0, 260.0),
+                    },
+                ],
+                required_bounces: 0,
+                default_launch: LaunchConfig {
+                    angle_deg: 20.0,
+                    speed_mps: 145.0,
+                    height_m: 24.0,
+                },
             },
-            barriers: vec![],
-            required_bounces: 1,
-        }
+            Self {
+                code: "MOON 4",
+                title: "Bank Shot Through Gap",
+                environment: moon_env,
+                target: Target {
+                    center: vec2(1110.0, 220.0),
+                    radius_m: 32.0,
+                },
+                bounce_surface: Some(BounceSurface {
+                    x_start: 420.0,
+                    x_end: 710.0,
+                    y: 95.0,
+                    restitution: 0.88,
+                }),
+                barriers: vec![
+                    Barrier {
+                        rect: Rect::new(790.0, 0.0, 36.0, 250.0),
+                    },
+                    Barrier {
+                        rect: Rect::new(790.0, 340.0, 36.0, 260.0),
+                    },
+                ],
+                required_bounces: 1,
+                default_launch: LaunchConfig {
+                    angle_deg: 24.0,
+                    speed_mps: 170.0,
+                    height_m: 30.0,
+                },
+            },
+        ]
     }
 }
 
@@ -113,6 +196,12 @@ enum GamePhase {
     Flying,
     Success,
     Failed,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AppScene {
+    Title,
+    Game,
 }
 
 struct GameState {
@@ -189,15 +278,16 @@ fn step_projectile(projectile: &mut Projectile, level: &Level, dt: f32) -> StepO
     projectile.position += projectile.velocity * dt;
     projectile.elapsed_s += dt;
 
-    let surface = level.bounce_surface;
-    let crossed_surface = prev.y >= surface.y && projectile.position.y <= surface.y;
-    let on_surface_x =
-        projectile.position.x >= surface.x_start && projectile.position.x <= surface.x_end;
-    if crossed_surface && on_surface_x && projectile.velocity.y < 0.0 {
-        projectile.position.y = surface.y + 0.01;
-        projectile.velocity.y = -projectile.velocity.y * surface.restitution;
-        projectile.velocity.x *= 0.985;
-        projectile.bounces += 1;
+    if let Some(surface) = level.bounce_surface {
+        let crossed_surface = prev.y >= surface.y && projectile.position.y <= surface.y;
+        let on_surface_x =
+            projectile.position.x >= surface.x_start && projectile.position.x <= surface.x_end;
+        if crossed_surface && on_surface_x && projectile.velocity.y < 0.0 {
+            projectile.position.y = surface.y + 0.01;
+            projectile.velocity.y = -projectile.velocity.y * surface.restitution;
+            projectile.velocity.x *= 0.985;
+            projectile.bounces += 1;
+        }
     }
 
     if level
@@ -379,33 +469,34 @@ fn draw_level_objects(
     top: f32,
     bottom: f32,
 ) {
-    let surface = level.bounce_surface;
-    let s0 = world_to_screen(
-        vec2(surface.x_start, surface.y),
-        world_max_x,
-        world_max_y,
-        left,
-        right,
-        top,
-        bottom,
-    );
-    let s1 = world_to_screen(
-        vec2(surface.x_end, surface.y),
-        world_max_x,
-        world_max_y,
-        left,
-        right,
-        top,
-        bottom,
-    );
-    draw_line(
-        s0.x,
-        s0.y,
-        s1.x,
-        s1.y,
-        7.0,
-        Color::from_rgba(242, 159, 5, 255),
-    );
+    if let Some(surface) = level.bounce_surface {
+        let s0 = world_to_screen(
+            vec2(surface.x_start, surface.y),
+            world_max_x,
+            world_max_y,
+            left,
+            right,
+            top,
+            bottom,
+        );
+        let s1 = world_to_screen(
+            vec2(surface.x_end, surface.y),
+            world_max_x,
+            world_max_y,
+            left,
+            right,
+            top,
+            bottom,
+        );
+        draw_line(
+            s0.x,
+            s0.y,
+            s1.x,
+            s1.y,
+            7.0,
+            Color::from_rgba(242, 159, 5, 255),
+        );
+    }
 
     let target_center = world_to_screen(
         level.target.center,
@@ -494,6 +585,69 @@ fn draw_path(
     }
 }
 
+fn draw_title_screen(screen_w: f32, screen_h: f32, font: Option<&Font>) -> bool {
+    clear_background(TITLE_SCREEN_BG);
+
+    let title = "Parabolic Rust";
+    let title_size: u16 = 110;
+    let title_measure = measure_text(title, font, title_size, 1.0);
+    let title_x = (screen_w - title_measure.width) * 0.5;
+    let title_y = (screen_h * 0.40).max(180.0);
+    draw_ui_text(title, title_x, title_y, title_size, BLACK, font);
+
+    let button_w = 330.0;
+    let button_h = 90.0;
+    let button_x = (screen_w - button_w) * 0.5;
+    let button_y = title_y + 70.0;
+    let button_rect = Rect::new(button_x, button_y, button_w, button_h);
+    draw_rectangle(
+        button_rect.x,
+        button_rect.y,
+        button_rect.w,
+        button_rect.h,
+        START_BUTTON_COLOR,
+    );
+    draw_rectangle_lines(
+        button_rect.x,
+        button_rect.y,
+        button_rect.w,
+        button_rect.h,
+        3.0,
+        WHITE,
+    );
+
+    let button_text_size: u16 = 42;
+    let button_text_measure = measure_text(START_BUTTON_TEXT, font, button_text_size, 1.0);
+    draw_ui_text(
+        START_BUTTON_TEXT,
+        button_rect.x + (button_rect.w - button_text_measure.width) * 0.5,
+        button_rect.y + (button_rect.h + button_text_measure.height) * 0.5 - 8.0,
+        button_text_size,
+        WHITE,
+        font,
+    );
+
+    let hint = "Click button or press Enter/Space";
+    let hint_size: u16 = 22;
+    let hint_measure = measure_text(hint, font, hint_size, 1.0);
+    draw_ui_text(
+        hint,
+        (screen_w - hint_measure.width) * 0.5,
+        button_rect.y + button_rect.h + 38.0,
+        hint_size,
+        DARKGRAY,
+        font,
+    );
+
+    let mouse = mouse_position();
+    let mouse_vec = vec2(mouse.0, mouse.1);
+    let clicked_start =
+        is_mouse_button_pressed(MouseButton::Left) && button_rect.contains(mouse_vec);
+    let hotkey_start = is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::Space);
+
+    clicked_start || hotkey_start
+}
+
 fn window_conf() -> Conf {
     Conf {
         window_title: "ParabolicRust Interactive".to_string(),
@@ -515,19 +669,30 @@ async fn main() {
         }
     };
 
-    let level = Level::moon_level_two();
-    let mut config = LaunchConfig {
-        angle_deg: 28.0,
-        speed_mps: 145.0,
-        height_m: 22.0,
-    };
+    let levels = Level::moon_campaign();
+    let mut current_level_idx = 0usize;
+    let mut highest_unlocked_level = 0usize;
+    let mut config = levels[current_level_idx].default_launch;
     let mut game = GameState::new();
     let mut show_preview = true;
+    let mut sim_speed = 1.0f32;
+    let mut scene = AppScene::Title;
 
     loop {
+        let level = &levels[current_level_idx];
         let frame_dt = get_frame_time();
         let screen_w = screen_width();
         let screen_h = screen_height();
+
+        if scene == AppScene::Title {
+            if draw_title_screen(screen_w, screen_h, ui_font.as_ref()) {
+                scene = AppScene::Game;
+                game.reset();
+                game.status_line = format!("Loaded {}", levels[current_level_idx].code);
+            }
+            next_frame().await;
+            continue;
+        }
 
         let left = LEFT_MARGIN;
         let right = screen_w - RIGHT_MARGIN;
@@ -550,12 +715,26 @@ async fn main() {
         if is_key_pressed(KeyCode::R) {
             game.reset();
         }
+        if is_key_pressed(KeyCode::N) && current_level_idx < highest_unlocked_level {
+            current_level_idx += 1;
+            config = levels[current_level_idx].default_launch;
+            game.reset();
+            game.status_line = format!("Advanced to {}", levels[current_level_idx].code);
+        }
+        if is_key_pressed(KeyCode::P) && current_level_idx > 0 {
+            current_level_idx -= 1;
+            config = levels[current_level_idx].default_launch;
+            game.reset();
+            game.status_line = format!("Moved to {}", levels[current_level_idx].code);
+        }
 
         // UI panel with sliders/buttons for "real" controls.
         let mut launch_clicked = false;
         let mut reset_clicked = false;
+        let mut next_level_clicked = false;
+        let mut prev_level_clicked = false;
         widgets::Window::new(hash!(), vec2(18.0, 120.0), vec2(360.0, 300.0))
-            .label("Moon Level 2 Controls")
+            .label(&format!("{} Controls", level.code))
             .ui(&mut *root_ui(), |ui| {
                 ui.label(None, &format!("Environment: {}", level.environment.name));
                 ui.label(
@@ -571,6 +750,7 @@ async fn main() {
                 ui.slider(hash!(), "Angle (deg)", -89.0..89.0, &mut config.angle_deg);
                 ui.slider(hash!(), "Velocity (m/s)", 5.0..500.0, &mut config.speed_mps);
                 ui.slider(hash!(), "Height (m)", 0.0..400.0, &mut config.height_m);
+                ui.slider(hash!(), "Simulation Speed", 0.5..5.0, &mut sim_speed);
                 ui.separator();
                 if ui.button(None, "Launch (Space)") {
                     launch_clicked = true;
@@ -581,6 +761,20 @@ async fn main() {
                 if ui.button(None, "Toggle Preview") {
                     show_preview = !show_preview;
                 }
+                if ui.button(None, "Prev Level (P)") {
+                    prev_level_clicked = true;
+                }
+                if ui.button(None, "Next Level (N)") {
+                    next_level_clicked = true;
+                }
+                ui.label(
+                    None,
+                    &format!(
+                        "Progress: level {} of {} unlocked",
+                        highest_unlocked_level + 1,
+                        levels.len()
+                    ),
+                );
                 ui.label(
                     None,
                     if game.paused {
@@ -607,11 +801,25 @@ async fn main() {
         if reset_clicked {
             game.reset();
         }
+        if prev_level_clicked && current_level_idx > 0 {
+            current_level_idx -= 1;
+            config = levels[current_level_idx].default_launch;
+            game.reset();
+            game.status_line = format!("Moved to {}", levels[current_level_idx].code);
+            continue;
+        }
+        if next_level_clicked && current_level_idx < highest_unlocked_level {
+            current_level_idx += 1;
+            config = levels[current_level_idx].default_launch;
+            game.reset();
+            game.status_line = format!("Advanced to {}", levels[current_level_idx].code);
+            continue;
+        }
 
         let prediction = simulate_prediction(config, &level);
 
         if matches!(game.phase, GamePhase::Flying) && !game.paused {
-            let mut remaining = frame_dt.min(0.05);
+            let mut remaining = (frame_dt * sim_speed).min(0.10);
             while remaining > 0.0 {
                 let dt = remaining.min(FIXED_STEP_S);
                 remaining -= dt;
@@ -628,9 +836,19 @@ async fn main() {
                         };
                         game.status_line = match outcome {
                             StepOutcome::HitTarget => {
+                                if current_level_idx == highest_unlocked_level
+                                    && highest_unlocked_level + 1 < levels.len()
+                                {
+                                    highest_unlocked_level += 1;
+                                }
+                                let unlock_note = if current_level_idx < highest_unlocked_level {
+                                    " | Next level unlocked (N)"
+                                } else {
+                                    " | Campaign complete"
+                                };
                                 format!(
-                                    "Target hit in {:.2}s with {} bounce(s)",
-                                    shot.elapsed_s, shot.bounces
+                                    "Target hit in {:.2}s with {} bounce(s){}",
+                                    shot.elapsed_s, shot.bounces, unlock_note
                                 )
                             }
                             StepOutcome::HitGround => {
@@ -660,16 +878,20 @@ async fn main() {
         let mut raw_max_x = prediction
             .range_m
             .max(level.target.center.x + level.target.radius_m)
-            .max(level.bounce_surface.x_end)
             .max(1.0);
+        if let Some(surface) = level.bounce_surface {
+            raw_max_x = raw_max_x.max(surface.x_end);
+        }
         let mut raw_max_y = prediction
             .points
             .iter()
             .fold(0.0f32, |acc, p| acc.max(p.y))
             .max(config.height_m)
             .max(level.target.center.y + level.target.radius_m)
-            .max(level.bounce_surface.y)
             .max(1.0);
+        if let Some(surface) = level.bounce_surface {
+            raw_max_y = raw_max_y.max(surface.y);
+        }
         if let Some(shot) = game.shot {
             raw_max_x = raw_max_x.max(shot.position.x);
             raw_max_y = raw_max_y.max(shot.position.y);
@@ -784,8 +1006,22 @@ async fn main() {
             DARKGRAY,
             ui_font.as_ref(),
         );
+        let top_right_level = format!(
+            "{} - Level {}",
+            level.environment.name,
+            current_level_idx + 1
+        );
+        let top_right_size = measure_text(&top_right_level, ui_font.as_ref(), 24, 1.0);
         draw_ui_text(
-            "Controls: Space launch/pause | R reset | Use sliders in panel",
+            &top_right_level,
+            right - top_right_size.width,
+            TITLE_Y + 2.0,
+            24,
+            DARKGRAY,
+            ui_font.as_ref(),
+        );
+        draw_ui_text(
+            "Controls: Space launch/pause | R reset | P/N level nav | Use sliders in panel",
             left + 12.0,
             CONTROLS_Y,
             20,
@@ -821,8 +1057,8 @@ async fn main() {
         );
         draw_ui_text(
             &format!(
-                "Flight: {:.2} s | Range: {:.2} m | Bounces: {} | State: {}",
-                active_time, active_range, active_bounces, phase_text
+                "Flight: {:.2} s | Range: {:.2} m | Bounces: {} | Speed x{:.2} | State: {}",
+                active_time, active_range, active_bounces, sim_speed, phase_text
             ),
             left,
             screen_h - 14.0,

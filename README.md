@@ -73,15 +73,20 @@ cargo run --bin interactive_macroquad
 ```
 
 Current mode:
-- starts in `Moon Level 2` (`Bounce Into Target`)
+- starts in a 4-level Moon campaign
 - moon gravity, no drag, no wind
-- requires at least one bounce on the fixed surface before a target hit counts
+- level progression unlocks as you clear each level
 
 Controls:
 - use sliders in the control panel for `Angle`, `Velocity`, and `Height`
+- use `Simulation Speed` slider (`0.5x` to `5.0x`)
 - `Launch (Space)`: launch shot (or pause/resume while flying)
 - `Reset (R)`: reset shot
 - `Toggle Preview`: show/hide predicted path
+- `Prev Level (P)` / `Next Level (N)`: navigate unlocked Moon levels
+
+Startup:
+- title screen appears first with a `Start Game` button (or press `Enter`/`Space`)
 
 ## Web UI (v7)
 Build the interactive app for browser:
