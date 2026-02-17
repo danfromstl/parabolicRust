@@ -6,7 +6,7 @@ const INITIAL_WINDOW_HEIGHT: i32 = 1080;
 const MSAA_SAMPLES: i32 = 4;
 const UI_FONT_PATH: &str = "assets/fonts/Lato-Regular.ttf";
 
-const LEFT_MARGIN: f32 = 60.0;
+const LEFT_MARGIN: f32 = 120.0;
 const RIGHT_MARGIN: f32 = 30.0;
 const TOP_MARGIN: f32 = 140.0;
 const BOTTOM_MARGIN: f32 = 130.0;
@@ -22,6 +22,16 @@ const Y_GRID_LINES: usize = 8;
 const TITLE_SCREEN_BG: Color = Color::new(0.92, 0.93, 0.95, 1.0);
 const START_BUTTON_COLOR: Color = Color::new(0.14, 0.45, 0.95, 1.0);
 const START_BUTTON_TEXT: &str = "Start Game";
+const SURFACE_HANDLE_RADIUS: f32 = 8.0;
+const ROTATE_HANDLE_RADIUS: f32 = 9.0;
+const ROTATE_HANDLE_STICK_PX: f32 = 34.0;
+const LAUNCH_HANDLE_RADIUS: f32 = 8.0;
+const LAUNCH_GHOST_RADIUS: f32 = 7.0;
+const LAUNCH_DRAG_MIN_PX: f32 = 10.0;
+const LAUNCH_GHOST_BELOW_AXIS_PX: f32 = 220.0;
+const HEIGHT_KEY_RATE_MPS: f32 = 90.0;
+const VELOCITY_KEY_RATE_MPS: f32 = 140.0;
+const SLINGSHOT_VERTICAL_MIRROR: bool = true;
 
 #[derive(Clone, Copy)]
 struct LaunchConfig {
@@ -40,9 +50,7 @@ struct Environment {
 
 #[derive(Clone, Copy)]
 struct BounceSurface {
-    x_start: f32,
-    x_end: f32,
-    y: f32,
+    corners: [Vec2; 4],
     restitution: f32,
 }
 
@@ -104,9 +112,12 @@ impl Level {
                     radius_m: 35.0,
                 },
                 bounce_surface: Some(BounceSurface {
-                    x_start: 380.0,
-                    x_end: 690.0,
-                    y: 85.0,
+                    corners: [
+                        vec2(380.0, 95.0),
+                        vec2(690.0, 95.0),
+                        vec2(690.0, 75.0),
+                        vec2(380.0, 75.0),
+                    ],
                     restitution: 0.9,
                 }),
                 barriers: vec![],
@@ -150,9 +161,12 @@ impl Level {
                     radius_m: 32.0,
                 },
                 bounce_surface: Some(BounceSurface {
-                    x_start: 420.0,
-                    x_end: 710.0,
-                    y: 95.0,
+                    corners: [
+                        vec2(420.0, 106.0),
+                        vec2(710.0, 106.0),
+                        vec2(710.0, 84.0),
+                        vec2(420.0, 84.0),
+                    ],
                     restitution: 0.88,
                 }),
                 barriers: vec![
@@ -241,6 +255,70 @@ impl GameState {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SurfaceDragMode {
+    Corner(usize),
+    Surface,
+    Rotate,
+}
+
+struct SurfaceEditor {
+    drag_mode: Option<SurfaceDragMode>,
+    hovered_corner: Option<usize>,
+    hovered_surface: bool,
+    hovered_rotate: bool,
+    drag_start_mouse_world: Vec2,
+    drag_start_corners: [Vec2; 4],
+    rotate_center_world: Vec2,
+    rotate_start_angle_rad: f32,
+}
+
+impl SurfaceEditor {
+    fn new() -> Self {
+        Self {
+            drag_mode: None,
+            hovered_corner: None,
+            hovered_surface: false,
+            hovered_rotate: false,
+            drag_start_mouse_world: Vec2::ZERO,
+            drag_start_corners: [Vec2::ZERO; 4],
+            rotate_center_world: Vec2::ZERO,
+            rotate_start_angle_rad: 0.0,
+        }
+    }
+
+    fn is_dragging(&self) -> bool {
+        self.drag_mode.is_some()
+    }
+
+    fn active_corner(&self) -> Option<usize> {
+        match self.drag_mode {
+            Some(SurfaceDragMode::Corner(idx)) => Some(idx),
+            _ => None,
+        }
+    }
+
+    fn active_rotate(&self) -> bool {
+        matches!(self.drag_mode, Some(SurfaceDragMode::Rotate))
+    }
+}
+
+struct LaunchEditor {
+    active: bool,
+    hovered: bool,
+    ghost_screen: Vec2,
+}
+
+impl LaunchEditor {
+    fn new() -> Self {
+        Self {
+            active: false,
+            hovered: false,
+            ghost_screen: Vec2::ZERO,
+        }
+    }
+}
+
 struct Prediction {
     points: Vec<Vec2>,
     range_m: f32,
@@ -266,6 +344,85 @@ fn launch_projectile(config: LaunchConfig) -> Projectile {
     }
 }
 
+fn cross_2d(a: Vec2, b: Vec2) -> f32 {
+    (a.x * b.y) - (a.y * b.x)
+}
+
+fn segment_intersection(p: Vec2, p2: Vec2, q: Vec2, q2: Vec2) -> Option<(f32, f32)> {
+    let r = p2 - p;
+    let s = q2 - q;
+    let rxs = cross_2d(r, s);
+    let qmp = q - p;
+
+    if rxs.abs() < 1e-6 {
+        return None;
+    }
+
+    let t = cross_2d(qmp, s) / rxs;
+    let u = cross_2d(qmp, r) / rxs;
+    if (0.0..=1.0).contains(&t) && (0.0..=1.0).contains(&u) {
+        Some((t, u))
+    } else {
+        None
+    }
+}
+
+fn point_in_polygon(point: Vec2, polygon: &[Vec2]) -> bool {
+    if polygon.len() < 3 {
+        return false;
+    }
+
+    let mut inside = false;
+    let mut j = polygon.len() - 1;
+    for i in 0..polygon.len() {
+        let pi = polygon[i];
+        let pj = polygon[j];
+        let intersect = ((pi.y > point.y) != (pj.y > point.y))
+            && (point.x < (pj.x - pi.x) * (point.y - pi.y) / (pj.y - pi.y + 1e-6) + pi.x);
+        if intersect {
+            inside = !inside;
+        }
+        j = i;
+    }
+
+    inside
+}
+
+fn bounce_surface_edges(corners: &[Vec2; 4]) -> [(Vec2, Vec2); 4] {
+    [
+        (corners[0], corners[1]),
+        (corners[1], corners[2]),
+        (corners[2], corners[3]),
+        (corners[3], corners[0]),
+    ]
+}
+
+fn quad_center(corners: &[Vec2; 4]) -> Vec2 {
+    (corners[0] + corners[1] + corners[2] + corners[3]) * 0.25
+}
+
+fn rotate_vec(v: Vec2, angle_rad: f32) -> Vec2 {
+    let cos_a = angle_rad.cos();
+    let sin_a = angle_rad.sin();
+    vec2((v.x * cos_a) - (v.y * sin_a), (v.x * sin_a) + (v.y * cos_a))
+}
+
+fn rotation_handle_screen(corners_screen: &[Vec2; 4]) -> (Vec2, Vec2) {
+    let edge_mid = (corners_screen[0] + corners_screen[1]) * 0.5;
+    let center = quad_center(corners_screen);
+    let edge_dir = (corners_screen[1] - corners_screen[0]).normalize_or_zero();
+
+    if edge_dir.length_squared() < 1e-8 {
+        return (edge_mid, edge_mid + vec2(0.0, -ROTATE_HANDLE_STICK_PX));
+    }
+
+    let mut outward = vec2(-edge_dir.y, edge_dir.x).normalize_or_zero();
+    if outward.dot(center - edge_mid) > 0.0 {
+        outward = -outward;
+    }
+    (edge_mid, edge_mid + (outward * ROTATE_HANDLE_STICK_PX))
+}
+
 fn step_projectile(projectile: &mut Projectile, level: &Level, dt: f32) -> StepOutcome {
     let env = level.environment;
     let prev = projectile.position;
@@ -279,13 +436,40 @@ fn step_projectile(projectile: &mut Projectile, level: &Level, dt: f32) -> StepO
     projectile.elapsed_s += dt;
 
     if let Some(surface) = level.bounce_surface {
-        let crossed_surface = prev.y >= surface.y && projectile.position.y <= surface.y;
-        let on_surface_x =
-            projectile.position.x >= surface.x_start && projectile.position.x <= surface.x_end;
-        if crossed_surface && on_surface_x && projectile.velocity.y < 0.0 {
-            projectile.position.y = surface.y + 0.01;
-            projectile.velocity.y = -projectile.velocity.y * surface.restitution;
-            projectile.velocity.x *= 0.985;
+        let edges = bounce_surface_edges(&surface.corners);
+        let mut best_hit: Option<(f32, Vec2, Vec2)> = None;
+
+        for (a, b) in edges {
+            if let Some((t, _u)) = segment_intersection(prev, projectile.position, a, b) {
+                let intersection = prev + ((projectile.position - prev) * t);
+                let edge_dir = (b - a).normalize_or_zero();
+                if edge_dir.length_squared() < 1e-8 {
+                    continue;
+                }
+                let mut normal = vec2(-edge_dir.y, edge_dir.x).normalize_or_zero();
+                if normal.length_squared() < 1e-8 {
+                    continue;
+                }
+                if projectile.velocity.dot(normal) > 0.0 {
+                    normal = -normal;
+                }
+
+                if best_hit.is_none_or(|(best_t, _, _)| t < best_t) {
+                    best_hit = Some((t, intersection, normal));
+                }
+            }
+        }
+
+        if let Some((_t, intersection, normal)) = best_hit {
+            let vn = projectile.velocity.dot(normal);
+            projectile.velocity -= normal * ((1.0 + surface.restitution) * vn);
+            projectile.velocity *= 0.995;
+            projectile.position = intersection + (normal * 0.05);
+            projectile.bounces += 1;
+        } else if point_in_polygon(projectile.position, &surface.corners) {
+            // Fallback if step ends inside surface without a clean edge intersection.
+            projectile.velocity.y = projectile.velocity.y.abs() * surface.restitution;
+            projectile.position.y += 0.05;
             projectile.bounces += 1;
         }
     }
@@ -366,6 +550,22 @@ fn world_to_screen(
     let x = left + (world.x / world_max_x.max(1.0)) * plot_w;
     let y = bottom - (world.y / world_max_y.max(1.0)) * plot_h;
     vec2(x, y)
+}
+
+fn screen_to_world(
+    screen: Vec2,
+    world_max_x: f32,
+    world_max_y: f32,
+    left: f32,
+    right: f32,
+    top: f32,
+    bottom: f32,
+) -> Vec2 {
+    let plot_w = (right - left).max(1.0);
+    let plot_h = (bottom - top).max(1.0);
+    let world_x = ((screen.x - left) / plot_w) * world_max_x.max(1.0);
+    let world_y = ((bottom - screen.y) / plot_h) * world_max_y.max(1.0);
+    vec2(world_x.max(0.0), world_y.max(0.0))
 }
 
 fn format_axis_value(value: f32, axis_max: f32) -> String {
@@ -460,6 +660,228 @@ fn draw_axis_tick_labels(
     draw_ui_text("Height (m)", left + 10.0, top - 8.0, 18, label_color, font);
 }
 
+fn compute_world_window(
+    level: &Level,
+    config: LaunchConfig,
+    prediction: &Prediction,
+    shot: Option<Projectile>,
+) -> (f32, f32) {
+    let mut raw_max_x = prediction
+        .range_m
+        .max(level.target.center.x + level.target.radius_m)
+        .max(1.0);
+    let mut raw_max_y = prediction
+        .points
+        .iter()
+        .fold(0.0f32, |acc, p| acc.max(p.y))
+        .max(config.height_m)
+        .max(level.target.center.y + level.target.radius_m)
+        .max(1.0);
+
+    if let Some(surface) = level.bounce_surface {
+        for corner in surface.corners {
+            raw_max_x = raw_max_x.max(corner.x);
+            raw_max_y = raw_max_y.max(corner.y);
+        }
+    }
+
+    for barrier in &level.barriers {
+        raw_max_x = raw_max_x.max(barrier.rect.x + barrier.rect.w);
+        raw_max_y = raw_max_y.max(barrier.rect.y + barrier.rect.h);
+    }
+
+    if let Some(shot) = shot {
+        raw_max_x = raw_max_x.max(shot.position.x);
+        raw_max_y = raw_max_y.max(shot.position.y);
+    }
+
+    axis_window(raw_max_x, raw_max_y)
+}
+
+fn update_surface_editor(
+    level: &mut Level,
+    editor: &mut SurfaceEditor,
+    mouse_screen: Vec2,
+    world_max_x: f32,
+    world_max_y: f32,
+    left: f32,
+    right: f32,
+    top: f32,
+    bottom: f32,
+) -> bool {
+    let Some(surface) = level.bounce_surface.as_mut() else {
+        editor.drag_mode = None;
+        editor.hovered_corner = None;
+        editor.hovered_surface = false;
+        editor.hovered_rotate = false;
+        return false;
+    };
+
+    if !is_mouse_button_down(MouseButton::Left) {
+        editor.drag_mode = None;
+    }
+
+    let corners_screen = surface
+        .corners
+        .map(|corner| world_to_screen(corner, world_max_x, world_max_y, left, right, top, bottom));
+
+    let mut hovered_corner = None;
+    for (idx, corner) in corners_screen.iter().copied().enumerate() {
+        if mouse_screen.distance(corner) <= (SURFACE_HANDLE_RADIUS + 4.0) {
+            hovered_corner = Some(idx);
+            break;
+        }
+    }
+
+    let (_rotate_anchor, rotate_handle) = rotation_handle_screen(&corners_screen);
+    let hovered_rotate = mouse_screen.distance(rotate_handle) <= (ROTATE_HANDLE_RADIUS + 4.0);
+    let hovered_inside = point_in_polygon(mouse_screen, &corners_screen);
+    let hovered_surface = hovered_corner.is_some() || hovered_inside || hovered_rotate;
+
+    editor.hovered_corner = hovered_corner;
+    editor.hovered_rotate = hovered_rotate;
+    editor.hovered_surface = hovered_surface;
+
+    if is_mouse_button_pressed(MouseButton::Left) {
+        if let Some(corner_idx) = hovered_corner {
+            editor.drag_mode = Some(SurfaceDragMode::Corner(corner_idx));
+        } else if hovered_rotate {
+            editor.drag_mode = Some(SurfaceDragMode::Rotate);
+            editor.drag_start_corners = surface.corners;
+            editor.rotate_center_world = quad_center(&surface.corners);
+            let center_screen = world_to_screen(
+                editor.rotate_center_world,
+                world_max_x,
+                world_max_y,
+                left,
+                right,
+                top,
+                bottom,
+            );
+            editor.rotate_start_angle_rad =
+                (mouse_screen.y - center_screen.y).atan2(mouse_screen.x - center_screen.x);
+        } else if hovered_inside {
+            editor.drag_mode = Some(SurfaceDragMode::Surface);
+            editor.drag_start_mouse_world = screen_to_world(
+                mouse_screen,
+                world_max_x,
+                world_max_y,
+                left,
+                right,
+                top,
+                bottom,
+            );
+            editor.drag_start_corners = surface.corners;
+        }
+    }
+
+    let mut changed = false;
+    if let Some(mode) = editor.drag_mode {
+        match mode {
+            SurfaceDragMode::Corner(corner_idx) => {
+                let mut world = screen_to_world(
+                    mouse_screen,
+                    world_max_x,
+                    world_max_y,
+                    left,
+                    right,
+                    top,
+                    bottom,
+                );
+                // Keep corners within currently visible positive world.
+                world.x = world.x.clamp(0.0, world_max_x.max(1.0));
+                world.y = world.y.clamp(0.0, world_max_y.max(1.0));
+                surface.corners[corner_idx] = world;
+                changed = true;
+            }
+            SurfaceDragMode::Surface => {
+                let current_world = screen_to_world(
+                    mouse_screen,
+                    world_max_x,
+                    world_max_y,
+                    left,
+                    right,
+                    top,
+                    bottom,
+                );
+                let mut delta = current_world - editor.drag_start_mouse_world;
+                let mut min_x = editor.drag_start_corners[0].x;
+                let mut max_x = editor.drag_start_corners[0].x;
+                let mut min_y = editor.drag_start_corners[0].y;
+                let mut max_y = editor.drag_start_corners[0].y;
+                for corner in &editor.drag_start_corners[1..] {
+                    min_x = min_x.min(corner.x);
+                    max_x = max_x.max(corner.x);
+                    min_y = min_y.min(corner.y);
+                    max_y = max_y.max(corner.y);
+                }
+
+                delta.x = delta.x.clamp(-min_x, world_max_x.max(1.0) - max_x);
+                delta.y = delta.y.clamp(-min_y, world_max_y.max(1.0) - max_y);
+
+                surface.corners = editor
+                    .drag_start_corners
+                    .map(|corner| vec2(corner.x + delta.x, corner.y + delta.y));
+                changed = true;
+            }
+            SurfaceDragMode::Rotate => {
+                let center_screen = world_to_screen(
+                    editor.rotate_center_world,
+                    world_max_x,
+                    world_max_y,
+                    left,
+                    right,
+                    top,
+                    bottom,
+                );
+                let current_angle_rad =
+                    (mouse_screen.y - center_screen.y).atan2(mouse_screen.x - center_screen.x);
+                let delta_angle_rad = -(current_angle_rad - editor.rotate_start_angle_rad);
+
+                let mut rotated = editor.drag_start_corners.map(|corner| {
+                    let relative = corner - editor.rotate_center_world;
+                    editor.rotate_center_world + rotate_vec(relative, delta_angle_rad)
+                });
+
+                let mut min_x = rotated[0].x;
+                let mut max_x = rotated[0].x;
+                let mut min_y = rotated[0].y;
+                let mut max_y = rotated[0].y;
+                for corner in &rotated[1..] {
+                    min_x = min_x.min(corner.x);
+                    max_x = max_x.max(corner.x);
+                    min_y = min_y.min(corner.y);
+                    max_y = max_y.max(corner.y);
+                }
+
+                let shift_x = if min_x < 0.0 {
+                    -min_x
+                } else if max_x > world_max_x.max(1.0) {
+                    world_max_x.max(1.0) - max_x
+                } else {
+                    0.0
+                };
+                let shift_y = if min_y < 0.0 {
+                    -min_y
+                } else if max_y > world_max_y.max(1.0) {
+                    world_max_y.max(1.0) - max_y
+                } else {
+                    0.0
+                };
+
+                for corner in &mut rotated {
+                    corner.x = (corner.x + shift_x).max(0.0);
+                    corner.y = (corner.y + shift_y).max(0.0);
+                }
+                surface.corners = rotated;
+                changed = true;
+            }
+        }
+    }
+
+    hovered_surface || editor.is_dragging() || changed
+}
+
 fn draw_level_objects(
     level: &Level,
     world_max_x: f32,
@@ -468,34 +890,85 @@ fn draw_level_objects(
     right: f32,
     top: f32,
     bottom: f32,
+    show_surface_handles: bool,
+    editor: &SurfaceEditor,
 ) {
     if let Some(surface) = level.bounce_surface {
-        let s0 = world_to_screen(
-            vec2(surface.x_start, surface.y),
-            world_max_x,
-            world_max_y,
-            left,
-            right,
-            top,
-            bottom,
+        let corners = surface.corners.map(|corner| {
+            world_to_screen(corner, world_max_x, world_max_y, left, right, top, bottom)
+        });
+        draw_triangle(
+            corners[0],
+            corners[1],
+            corners[2],
+            Color::from_rgba(242, 159, 5, 115),
         );
-        let s1 = world_to_screen(
-            vec2(surface.x_end, surface.y),
-            world_max_x,
-            world_max_y,
-            left,
-            right,
-            top,
-            bottom,
+        draw_triangle(
+            corners[0],
+            corners[2],
+            corners[3],
+            Color::from_rgba(242, 159, 5, 115),
         );
-        draw_line(
-            s0.x,
-            s0.y,
-            s1.x,
-            s1.y,
-            7.0,
-            Color::from_rgba(242, 159, 5, 255),
-        );
+
+        for (a, b) in bounce_surface_edges(&corners) {
+            draw_line(a.x, a.y, b.x, b.y, 3.0, Color::from_rgba(242, 159, 5, 255));
+        }
+
+        if show_surface_handles || editor.is_dragging() {
+            let active_corner = editor.active_corner();
+            for (idx, corner) in corners.iter().copied().enumerate() {
+                let is_active = active_corner == Some(idx);
+                let is_hovered = editor.hovered_corner == Some(idx);
+                draw_circle(
+                    corner.x,
+                    corner.y,
+                    SURFACE_HANDLE_RADIUS,
+                    if is_active {
+                        Color::from_rgba(37, 99, 235, 255)
+                    } else if is_hovered {
+                        Color::from_rgba(186, 214, 255, 255)
+                    } else {
+                        WHITE
+                    },
+                );
+                draw_circle_lines(
+                    corner.x,
+                    corner.y,
+                    SURFACE_HANDLE_RADIUS,
+                    2.0,
+                    Color::from_rgba(32, 32, 36, 255),
+                );
+            }
+
+            let (rotate_anchor, rotate_handle) = rotation_handle_screen(&corners);
+            draw_line(
+                rotate_anchor.x,
+                rotate_anchor.y,
+                rotate_handle.x,
+                rotate_handle.y,
+                2.0,
+                Color::from_rgba(92, 99, 112, 255),
+            );
+            draw_circle(
+                rotate_handle.x,
+                rotate_handle.y,
+                ROTATE_HANDLE_RADIUS,
+                if editor.active_rotate() {
+                    Color::from_rgba(37, 99, 235, 255)
+                } else if editor.hovered_rotate {
+                    Color::from_rgba(186, 214, 255, 255)
+                } else {
+                    WHITE
+                },
+            );
+            draw_circle_lines(
+                rotate_handle.x,
+                rotate_handle.y,
+                ROTATE_HANDLE_RADIUS,
+                2.0,
+                Color::from_rgba(32, 32, 36, 255),
+            );
+        }
     }
 
     let target_center = world_to_screen(
@@ -585,6 +1058,116 @@ fn draw_path(
     }
 }
 
+fn update_launch_editor(
+    config: &mut LaunchConfig,
+    editor: &mut LaunchEditor,
+    phase: GamePhase,
+    mouse_screen: Vec2,
+    launch_screen: Vec2,
+    world_max_x: f32,
+    world_max_y: f32,
+    left: f32,
+    right: f32,
+    top: f32,
+    bottom: f32,
+) -> bool {
+    if matches!(phase, GamePhase::Flying) {
+        editor.active = false;
+        editor.hovered = false;
+        return false;
+    }
+
+    if !is_mouse_button_down(MouseButton::Left) {
+        editor.active = false;
+    }
+
+    editor.hovered = mouse_screen.distance(launch_screen) <= (LAUNCH_HANDLE_RADIUS + 6.0);
+
+    if is_mouse_button_pressed(MouseButton::Left) && editor.hovered {
+        editor.active = true;
+    }
+
+    if !editor.active {
+        return false;
+    }
+
+    let ghost_x = mouse_screen
+        .x
+        .min(launch_screen.x - LAUNCH_DRAG_MIN_PX)
+        .clamp(0.0, launch_screen.x - LAUNCH_DRAG_MIN_PX);
+    let ghost_y = mouse_screen
+        .y
+        .clamp(top, bottom + LAUNCH_GHOST_BELOW_AXIS_PX);
+    editor.ghost_screen = vec2(ghost_x, ghost_y);
+
+    let px_per_world_x = ((right - left) / world_max_x.max(1.0)).max(1e-6);
+    let px_per_world_y = ((bottom - top) / world_max_y.max(1.0)).max(1e-6);
+    let launch_vx = ((launch_screen.x - editor.ghost_screen.x) / px_per_world_x).max(0.0);
+    let launch_vy = if SLINGSHOT_VERTICAL_MIRROR {
+        (editor.ghost_screen.y - launch_screen.y) / px_per_world_y
+    } else {
+        (launch_screen.y - editor.ghost_screen.y) / px_per_world_y
+    };
+    let speed = (launch_vx.powi(2) + launch_vy.powi(2))
+        .sqrt()
+        .clamp(5.0, 500.0);
+    let angle = launch_vy
+        .atan2(launch_vx.max(1e-6))
+        .to_degrees()
+        .clamp(-89.0, 89.0);
+
+    config.speed_mps = speed;
+    config.angle_deg = angle;
+    true
+}
+
+fn draw_launch_editor(launch_screen: Vec2, editor: &LaunchEditor) {
+    let launch_fill = if editor.active {
+        Color::from_rgba(37, 99, 235, 255)
+    } else if editor.hovered {
+        Color::from_rgba(191, 219, 254, 255)
+    } else {
+        Color::from_rgba(245, 89, 89, 255)
+    };
+    draw_circle(
+        launch_screen.x,
+        launch_screen.y,
+        LAUNCH_HANDLE_RADIUS,
+        launch_fill,
+    );
+    draw_circle_lines(
+        launch_screen.x,
+        launch_screen.y,
+        LAUNCH_HANDLE_RADIUS,
+        2.0,
+        Color::from_rgba(121, 28, 28, 255),
+    );
+
+    if editor.active {
+        draw_line(
+            launch_screen.x,
+            launch_screen.y,
+            editor.ghost_screen.x,
+            editor.ghost_screen.y,
+            2.0,
+            Color::from_rgba(37, 99, 235, 215),
+        );
+        draw_circle(
+            editor.ghost_screen.x,
+            editor.ghost_screen.y,
+            LAUNCH_GHOST_RADIUS,
+            Color::from_rgba(37, 99, 235, 230),
+        );
+        draw_circle_lines(
+            editor.ghost_screen.x,
+            editor.ghost_screen.y,
+            LAUNCH_GHOST_RADIUS,
+            2.0,
+            WHITE,
+        );
+    }
+}
+
 fn draw_title_screen(screen_w: f32, screen_h: f32, font: Option<&Font>) -> bool {
     clear_background(TITLE_SCREEN_BG);
 
@@ -669,7 +1252,7 @@ async fn main() {
         }
     };
 
-    let levels = Level::moon_campaign();
+    let mut levels = Level::moon_campaign();
     let mut current_level_idx = 0usize;
     let mut highest_unlocked_level = 0usize;
     let mut config = levels[current_level_idx].default_launch;
@@ -677,9 +1260,10 @@ async fn main() {
     let mut show_preview = true;
     let mut sim_speed = 1.0f32;
     let mut scene = AppScene::Title;
+    let mut surface_editor = SurfaceEditor::new();
+    let mut launch_editor = LaunchEditor::new();
 
     loop {
-        let level = &levels[current_level_idx];
         let frame_dt = get_frame_time();
         let screen_w = screen_width();
         let screen_h = screen_height();
@@ -728,22 +1312,23 @@ async fn main() {
             game.status_line = format!("Moved to {}", levels[current_level_idx].code);
         }
 
+        let level_code = levels[current_level_idx].code;
+        let level_env = levels[current_level_idx].environment;
+
         // UI panel with sliders/buttons for "real" controls.
         let mut launch_clicked = false;
         let mut reset_clicked = false;
         let mut next_level_clicked = false;
         let mut prev_level_clicked = false;
         widgets::Window::new(hash!(), vec2(18.0, 120.0), vec2(360.0, 300.0))
-            .label(&format!("{} Controls", level.code))
+            .label(&format!("{} Controls", level_code))
             .ui(&mut *root_ui(), |ui| {
-                ui.label(None, &format!("Environment: {}", level.environment.name));
+                ui.label(None, &format!("Environment: {}", level_env.name));
                 ui.label(
                     None,
                     &format!(
                         "g = {:.2} m/s^2 | wind = {:.2} | drag = {:.2}",
-                        level.environment.gravity_mps2,
-                        level.environment.wind_accel_x_mps2,
-                        level.environment.drag_linear
+                        level_env.gravity_mps2, level_env.wind_accel_x_mps2, level_env.drag_linear
                     ),
                 );
                 ui.separator();
@@ -816,7 +1401,22 @@ async fn main() {
             continue;
         }
 
-        let prediction = simulate_prediction(config, &level);
+        if !is_mouse_button_down(MouseButton::Left) {
+            if is_key_down(KeyCode::W) {
+                config.height_m += HEIGHT_KEY_RATE_MPS * frame_dt;
+            }
+            if is_key_down(KeyCode::S) {
+                config.height_m -= HEIGHT_KEY_RATE_MPS * frame_dt;
+            }
+            if is_key_down(KeyCode::D) {
+                config.speed_mps += VELOCITY_KEY_RATE_MPS * frame_dt;
+            }
+            if is_key_down(KeyCode::A) {
+                config.speed_mps -= VELOCITY_KEY_RATE_MPS * frame_dt;
+            }
+        }
+        config.height_m = config.height_m.clamp(0.0, 400.0);
+        config.speed_mps = config.speed_mps.clamp(5.0, 500.0);
 
         if matches!(game.phase, GamePhase::Flying) && !game.paused {
             let mut remaining = (frame_dt * sim_speed).min(0.10);
@@ -825,7 +1425,7 @@ async fn main() {
                 remaining -= dt;
 
                 if let Some(shot) = game.shot.as_mut() {
-                    let outcome = step_projectile(shot, &level, dt);
+                    let outcome = step_projectile(shot, &levels[current_level_idx], dt);
                     game.trail.push(shot.position);
 
                     if outcome != StepOutcome::Flying {
@@ -875,28 +1475,61 @@ async fn main() {
             }
         }
 
-        let mut raw_max_x = prediction
-            .range_m
-            .max(level.target.center.x + level.target.radius_m)
-            .max(1.0);
-        if let Some(surface) = level.bounce_surface {
-            raw_max_x = raw_max_x.max(surface.x_end);
+        let mut prediction = simulate_prediction(config, &levels[current_level_idx]);
+        let (mut world_max_x, mut world_max_y) =
+            compute_world_window(&levels[current_level_idx], config, &prediction, game.shot);
+
+        let mouse = mouse_position();
+        let mouse_screen = vec2(mouse.0, mouse.1);
+        let launch_screen = world_to_screen(
+            vec2(0.0, config.height_m.max(0.0)),
+            world_max_x,
+            world_max_y,
+            left,
+            right,
+            top,
+            bottom,
+        );
+        let launch_drag_changed = update_launch_editor(
+            &mut config,
+            &mut launch_editor,
+            game.phase,
+            mouse_screen,
+            launch_screen,
+            world_max_x,
+            world_max_y,
+            left,
+            right,
+            top,
+            bottom,
+        );
+        if launch_drag_changed {
+            prediction = simulate_prediction(config, &levels[current_level_idx]);
+            let window =
+                compute_world_window(&levels[current_level_idx], config, &prediction, game.shot);
+            world_max_x = window.0;
+            world_max_y = window.1;
         }
-        let mut raw_max_y = prediction
-            .points
-            .iter()
-            .fold(0.0f32, |acc, p| acc.max(p.y))
-            .max(config.height_m)
-            .max(level.target.center.y + level.target.radius_m)
-            .max(1.0);
-        if let Some(surface) = level.bounce_surface {
-            raw_max_y = raw_max_y.max(surface.y);
+
+        let show_surface_handles = update_surface_editor(
+            &mut levels[current_level_idx],
+            &mut surface_editor,
+            mouse_screen,
+            world_max_x,
+            world_max_y,
+            left,
+            right,
+            top,
+            bottom,
+        );
+
+        if show_surface_handles || surface_editor.is_dragging() {
+            prediction = simulate_prediction(config, &levels[current_level_idx]);
+            let window =
+                compute_world_window(&levels[current_level_idx], config, &prediction, game.shot);
+            world_max_x = window.0;
+            world_max_y = window.1;
         }
-        if let Some(shot) = game.shot {
-            raw_max_x = raw_max_x.max(shot.position.x);
-            raw_max_y = raw_max_y.max(shot.position.y);
-        }
-        let (world_max_x, world_max_y) = axis_window(raw_max_x, raw_max_y);
 
         clear_background(Color::from_rgba(250, 251, 253, 255));
         draw_grid(
@@ -917,7 +1550,27 @@ async fn main() {
             world_max_y,
             ui_font.as_ref(),
         );
-        draw_level_objects(&level, world_max_x, world_max_y, left, right, top, bottom);
+        draw_level_objects(
+            &levels[current_level_idx],
+            world_max_x,
+            world_max_y,
+            left,
+            right,
+            top,
+            bottom,
+            show_surface_handles,
+            &surface_editor,
+        );
+        let launch_screen_after = world_to_screen(
+            vec2(0.0, config.height_m.max(0.0)),
+            world_max_x,
+            world_max_y,
+            left,
+            right,
+            top,
+            bottom,
+        );
+        draw_launch_editor(launch_screen_after, &launch_editor);
 
         if show_preview && !matches!(game.phase, GamePhase::Flying) {
             draw_path(
@@ -998,7 +1651,9 @@ async fn main() {
         draw_ui_text(
             &format!(
                 "Level: {} - {} ({})",
-                level.code, level.title, level.environment.name
+                levels[current_level_idx].code,
+                levels[current_level_idx].title,
+                levels[current_level_idx].environment.name
             ),
             left,
             TITLE_Y + 30.0,
@@ -1008,7 +1663,7 @@ async fn main() {
         );
         let top_right_level = format!(
             "{} - Level {}",
-            level.environment.name,
+            levels[current_level_idx].environment.name,
             current_level_idx + 1
         );
         let top_right_size = measure_text(&top_right_level, ui_font.as_ref(), 24, 1.0);
@@ -1021,7 +1676,7 @@ async fn main() {
             ui_font.as_ref(),
         );
         draw_ui_text(
-            "Controls: Space launch/pause | R reset | P/N level nav | Use sliders in panel",
+            "Controls: drag launch dot left/up/down for angle+speed | W/S height | A/D velocity | Space launch/pause | R reset | P/N level nav",
             left + 12.0,
             CONTROLS_Y,
             20,

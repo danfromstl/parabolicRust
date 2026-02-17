@@ -84,6 +84,7 @@ Controls:
 - `Reset (R)`: reset shot
 - `Toggle Preview`: show/hide predicted path
 - `Prev Level (P)` / `Next Level (N)`: navigate unlocked Moon levels
+- Moon Levels 2 and 4: hover the bounce surface to reveal corner handles, then drag any corner to reshape it live
 
 Startup:
 - title screen appears first with a `Start Game` button (or press `Enter`/`Space`)
