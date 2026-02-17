@@ -23,6 +23,9 @@ A75_V150_H600_trajectory_2-16-26.png
 - `v7`: added web build pipeline (WASM + HTML), and upgraded interactive mode into a Moon level game with target + bounce
 - `v8 - Phase 1`: began structural refactor planning baseline (behavior-preserving organization pass before optimization/feature changes)
 - `v8 - Phase 2`: split the interactive macroquad binary into focused modules (`app`, `input`, `physics`, `render`, `model`, `constants`) with no intended behavior changes
+- `v8 - Phase 3`: extracted runtime state and gameplay/control flows into dedicated modules (`state`, `gameplay`, `controls`) so `app` is now mostly orchestration
+- `v8 - Phase 4`: extracted HUD/status/range-label composition into a dedicated `hud` module so `app` only coordinates update + render flow
+- `v9`: added an Earth campaign (4 levels) before Moon with Earth gravity + drag + random mild horizontal wind, and added a top-right success CTA button (`Next Level`)
 
 ## v8 - Phase 1 Structure
 This phase is intentionally behavior-preserving. No gameplay/plot logic was redesigned; shared core logic was moved into reusable library modules so future refactors can happen safely.
@@ -47,10 +50,14 @@ src/bin/interactive_macroquad/
   main.rs
   app.rs
   constants.rs
+  controls.rs
+  gameplay.rs
+  hud.rs
   input.rs
   model.rs
   physics.rs
   render.rs
+  state.rs
 ```
 
 ## Prerequisites (Windows)
@@ -104,8 +111,12 @@ cargo run --bin interactive_macroquad
 ```
 
 Current mode:
-- starts in a 4-level Moon campaign
-- moon gravity, no drag, no wind
+- starts in a 4-level Earth campaign, then continues into a 4-level Moon campaign
+- Earth levels use:
+  - gravity `9.8 m/s^2`
+  - constant linear drag (`drag_linear = 0.015`)
+  - mild random horizontal wind per level (forward or backward)
+- Moon levels use low gravity with no wind/drag
 - level progression unlocks as you clear each level
 
 Controls:
@@ -117,7 +128,8 @@ Controls:
 - `Launch (Space)`: launch shot (or pause/resume while flying)
 - `Reset (R)`: reset shot
 - `Toggle Preview`: show/hide predicted path
-- `Prev Level (P)` / `Next Level (N)`: navigate unlocked Moon levels
+- `Prev Level (P)` / `Next Level (N)`: navigate unlocked levels
+- after a successful clear, a large top-right `Next Level` button appears below the level label
 - Moon Levels 2 and 4: hover the bounce surface to reveal corner + rotation handles
 - drag any corner to reshape, drag inside the surface to move it, or drag the rotation handle to rotate it
 
